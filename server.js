@@ -19,8 +19,8 @@ class Server extends EventEmitter {
     while (session.readIndex < data.length) {
       let offset = 0
       if (session.messageLength === null) {
-        session.messageLength = data.slice(session.readIndex).readInt16BE() // first two bytes represent message length
-        offset = 2
+        session.messageLength = data.slice(session.readIndex).readUInt32BE() // first two bytes of a message represent message length
+        offset = 4 // UInt32BE bytes
       }
 
       const start = session.readIndex + offset
