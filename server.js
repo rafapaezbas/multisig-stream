@@ -1,13 +1,16 @@
 const net = require('net')
-const { Receiver, Session } = require('./lib/receiver.js')
+const { tcpServerStream } = require('./lib/tcp-server-stream.js')
 const encodings = require('./lib/encodings')
 const c = require('compact-encoding')
+const { pipeline } = require('streamx')
 
 module.exports = class Server {
   constructor () {
     this.sessions = []
+    this.session = []
     this._netServer = net.createServer((socket) => {
-      const session = new AuthenticatedSession(socket, (msg) => console.log('signed:', msg))
+      const stream = pipeline(socket, tcpServerStream())
+      const session = new AuthenticatedSession(stream)
       this.sessions.push(session)
     })
   }
@@ -15,29 +18,28 @@ module.exports = class Server {
   listen (port, address = '127.0.0.1') {
     this._netServer.listen(port, address)
   }
+
+  close () {
+    this._netServer.close()
+  }
 }
 
 class AuthenticatedSession {
-  constructor (socket, cb) {
+  constructor (stream) {
     this.publicKeys = []
-    const session = new Session()
-    const receiver = new Receiver()
-    socket.on('data', (data) => receiver.ondata(data, session))
-    receiver.on('message', this._onmessage)
+    stream.on('data', (data) => this._ondata(data))
   }
 
-  async _onmessage (msg) {
+  async _ondata (data) {
     if (this.publicKeys.length === 0) {
-      this._handshake(msg)
+      this._handshake(data)
     } else {
-      const { payload } = c.decode(encodings.message, msg)
-      // check signatures
-      await this.cb(payload)
+      const { payload } = c.decode(encodings.message, data)
     }
   }
 
-  _handshake (msg) {
-    const { publicKeys } = c.decode.encodings(encodings.handshake, msg)
+  _handshake (data) {
+    const { publicKeys } = c.decode.encodings(encodings.handshake, data)
     this.publicKeys = publicKeys
   }
 }

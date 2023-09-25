@@ -1,71 +1,86 @@
-const { Receiver, Session } = require('../lib/receiver.js')
-const { Sender } = require('../lib/sender.js')
+const { tcpServerStream } = require('../lib/tcp-server-stream.js')
+const { tcpClientStream } = require('../lib/tcp-client-stream.js')
 const test = require('brittle')
+const { pipeline, Readable } = require('streamx')
+const Client = require('../client.js')
+const Server = require('../server.js')
 
 test('messages format', async (t) => {
-  const receiver = new Receiver()
-  const sender = new Sender()
-  const session = new Session()
+  const serverStream = tcpServerStream()
+  const clientStream = tcpClientStream()
   t.plan(3)
 
   const payload = Buffer.from('hello from receiver')
-  receiver.on('message', rcv => {
+
+  const stream = pipeline(clientStream, serverStream)
+
+  stream.on('data', rcv => {
     t.ok(payload.equals(rcv))
-    t.is(session.buffer.length, 0)
-    t.is(session.messageLength, null)
+    t.is(serverStream.session.buffer.length, 0)
+    t.is(serverStream.session.messageLength, null)
   })
 
-  receiver.ondata(sender._format(payload), session)
+  stream.push(payload)
 })
 
 test('splitted message', async (t) => {
-  const receiver = new Receiver()
-  const sender = new Sender()
-  const session = new Session()
+  const serverStream = tcpServerStream()
   t.plan(3)
 
   const payload = Buffer.from('hello again from receiver, message splited')
-  const msg = sender._format(payload)
+  const msg = addHeader(payload)
   const msgA = msg.slice(0, Math.floor(msg.length / 2))
   const msgB = msg.slice(Math.floor(msg.length / 2), msg.length)
 
-  receiver.on('message', rcv => {
-    t.ok(payload.equals(rcv))
-    t.is(session.buffer.length, 0)
-    t.is(session.messageLength, null)
-  })
+  const stream = pipeline(Readable.from([msgA, msgB]), serverStream)
 
-  receiver.ondata(msgA, session)
-  receiver.ondata(msgB, session)
+  stream.on('data', rcv => {
+    t.ok(payload.equals(rcv))
+    t.is(serverStream.session.buffer.length, 0)
+    t.is(serverStream.session.messageLength, null)
+  })
 })
 
 test('multi message', async (t) => {
-  const receiver = new Receiver()
-  const sender = new Sender()
-  const session = new Session()
+  const serverStream = tcpServerStream()
   t.plan(6)
 
   const payloadA = Buffer.from('this is payloadA')
   const payloadB = Buffer.from('and this is payloadB')
-  const msgA = sender._format(payloadA)
-  const msgB = sender._format(payloadB)
+  const msgA = addHeader(payloadA)
+  const msgB = addHeader(payloadB)
 
   let messages = 0
 
-  receiver.on('message', rcv => {
+  const stream = pipeline(Readable.from(Buffer.concat([msgA, msgB])), serverStream)
+
+  stream.on('data', rcv => {
     if (messages === 0) {
       t.ok(rcv.equals(payloadA))
       messages++
     } else if (messages === 1) {
       t.ok(rcv.equals(payloadB))
     }
-    t.is(session.buffer.length, 0)
-    t.is(session.messageLength, null)
+    t.is(serverStream.session.buffer.length, 0)
+    t.is(serverStream.session.messageLength, null)
   })
-
-  receiver.ondata(Buffer.concat([msgA, msgB]), session)
 })
 
-test('handshake', async (t) => {
+test.skip('client/server', async (t) => {
+  const server = new Server()
+  const client = new Client()
 
+  server.listen(3333)
+  await client.connect(3333)
+
+  client.write('hello world')
 })
+
+// Same as transform of tcp-client-stream
+
+function addHeader (data) {
+  const buffer = Buffer.from(data)
+  const length = Buffer.alloc(4) // UInt32 bytes
+  length.writeUInt32BE(buffer.length)
+  return Buffer.concat([length, buffer])
+}
