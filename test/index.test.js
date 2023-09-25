@@ -15,7 +15,7 @@ test('messages format', async (t) => {
     t.is(session.messageLength, null)
   })
 
-  receiver._ondata(sender._format(payload), session)
+  receiver.ondata(sender._format(payload), session)
 })
 
 test('splitted message', async (t) => {
@@ -35,8 +35,8 @@ test('splitted message', async (t) => {
     t.is(session.messageLength, null)
   })
 
-  receiver._ondata(msgA, session)
-  receiver._ondata(msgB, session)
+  receiver.ondata(msgA, session)
+  receiver.ondata(msgB, session)
 })
 
 test('multi message', async (t) => {
@@ -63,5 +63,9 @@ test('multi message', async (t) => {
     t.is(session.messageLength, null)
   })
 
-  receiver._ondata(Buffer.concat([msgA, msgB]), session)
+  receiver.ondata(Buffer.concat([msgA, msgB]), session)
+})
+
+test('handshake', async (t) => {
+
 })
