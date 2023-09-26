@@ -1,13 +1,13 @@
-const { tcpServerStream } = require('../lib/tcp-server-stream.js')
-const { tcpClientStream } = require('../lib/tcp-client-stream.js')
+const { tcpReceiveStream } = require('../lib/tcp-receive-stream.js')
+const { tcpSendStream } = require('../lib/tcp-send-stream.js')
 const test = require('brittle')
 const { pipeline, Readable } = require('streamx')
 const Client = require('../client.js')
 const Server = require('../server.js')
 
 test('messages format', async (t) => {
-  const serverStream = tcpServerStream()
-  const clientStream = tcpClientStream()
+  const serverStream = tcpReceiveStream()
+  const clientStream = tcpSendStream()
   t.plan(3)
 
   const payload = Buffer.from('hello from receiver')
@@ -24,7 +24,7 @@ test('messages format', async (t) => {
 })
 
 test('splitted message', async (t) => {
-  const serverStream = tcpServerStream()
+  const serverStream = tcpReceiveStream()
   t.plan(3)
 
   const payload = Buffer.from('hello again from receiver, message splited')
@@ -42,7 +42,7 @@ test('splitted message', async (t) => {
 })
 
 test('multi message', async (t) => {
-  const serverStream = tcpServerStream()
+  const serverStream = tcpReceiveStream()
   t.plan(6)
 
   const payloadA = Buffer.from('this is payloadA')
@@ -66,14 +66,17 @@ test('multi message', async (t) => {
   })
 })
 
-test.skip('client/server', async (t) => {
+test.solo('client/server', async (t) => {
   const server = new Server()
   const client = new Client()
 
   server.listen(3333)
   await client.connect(3333)
 
-  client.write('hello world')
+  client.write('hello world from client')
+  client.write('hello world from client again')
+  client.write('and again')
+  // server.write('hello world from server')
 })
 
 // Same as transform of tcp-client-stream
