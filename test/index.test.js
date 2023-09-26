@@ -66,17 +66,64 @@ test('multi message', async (t) => {
   })
 })
 
-test.solo('client/server', async (t) => {
-  const server = new Server()
+test('encrypted client/server', async (t) => {
+  t.plan(3)
+
+  const payloadA = 'hello world from client'
+  const payloadB = 'again'
+  const payloadC = 'and again'
+
+  let messages = 0
+  const check = (data) => {
+    if (messages === 0) t.is(payloadA, data.toString())
+    if (messages === 1) t.is(payloadB, data.toString())
+    if (messages === 2) t.is(payloadC, data.toString())
+    messages++
+  }
+
+  const server = new Server((data) => check(data))
   const client = new Client()
 
   server.listen(3333)
   await client.connect(3333)
 
-  client.write('hello world from client')
-  client.write('hello world from client again')
-  client.write('and again')
-  // server.write('hello world from server')
+  client.write(payloadA)
+  client.write(payloadB)
+  client.write(payloadC)
+
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  server.close()
+  client.close()
+})
+
+test('multi client', async (t) => {
+  t.plan(2)
+
+  const payloadA = 'hello world from client A'
+  const payloadB = 'hello world from client B'
+
+  let messages = 0
+  const check = (data) => {
+    if (messages === 0) t.is(payloadA, data.toString())
+    if (messages === 1) t.is(payloadB, data.toString())
+    messages++
+  }
+
+  const server = new Server((data) => check(data))
+  const clientA = new Client()
+  const clientB = new Client()
+
+  server.listen(3333)
+  await clientA.connect(3333)
+  await clientB.connect(3333)
+
+  clientA.write(payloadA)
+  clientB.write(payloadB)
+
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  server.close()
+  clientA.close()
+  clientB.close()
 })
 
 // Same as transform of tcp-client-stream

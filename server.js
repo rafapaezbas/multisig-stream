@@ -8,17 +8,13 @@ const Noise = require('noise-handshake')
 const Cipher = require('noise-handshake/cipher')
 
 module.exports = class Server {
-  constructor () {
-    this.sessions = []
-    this.session = []
+  constructor (onconnection) {
+    this._sessions = []
     this._netServer = net.createServer((socket) => {
       const receiveStream = pipeline(socket, tcpReceiveStream())
       const sendStream = tcpSendStream()
-      const session = new AuthenticatedSession(receiveStream, sendStream)
-      sendStream.on('data', (data) => {
-        socket.write(data)
-      })
-      this.sessions.push(session)
+      const session = new AuthenticatedSession(receiveStream, sendStream, socket, onconnection)
+      this._sessions.push(session)
     })
   }
 
@@ -27,48 +23,55 @@ module.exports = class Server {
   }
 
   close () {
+    this._sessions.forEach(e => e.close())
     this._netServer.close()
   }
 }
 
 class AuthenticatedSession {
-  constructor (receiveStream, sendStream, opts = {}) {
-    this.receiveStream = receiveStream
-    this.sendStream = sendStream
-    this.receiveStream.on('data', (data) => this._ondata(data))
-    this.noiseHandshake = new Noise('XX', false, null)
-    this.cipher = null
+  constructor (receiveStream, sendStream, socket, onconnection, opts = {}) {
+    this._receiveStream = receiveStream
+    this._sendStream = sendStream
+    this._socket = socket
+    this._onconnection = onconnection
+    this._noiseHandshake = new Noise('XX', false, null)
+    this._encryptionCipher = null
+    this._decryptionCipher = null
+    this._receiveStream.on('data', (data) => this._ondata(data))
+    this._sendStream.on('data', (data) => socket.write(data))
   }
 
   write (msg) {
-    if (this.encryptionCipher) {
-      this.sendStream.write(this.encryptionCipher.encrypt(Buffer.from(msg)))
+    if (this._encryptionCipher) {
+      this._sendStream.write(this._encryptionCipher.encrypt(Buffer.from(msg)))
     } else {
-      this.sendStream.write(msg)
+      this._sendStream.write(msg)
     }
+  }
+
+  close () {
+    this._socket.end()
   }
 
   _handshake (data) {
     const { noiseHandshake } = c.decode(encodings.handshake, data)
-    if (this.noiseHandshake.key === null) {
-      this.noiseHandshake.initialise(Buffer.alloc(0)) // prelude
-      this.noiseHandshake.recv(noiseHandshake)
-      const reply = c.encode(encodings.handshake, { noiseHandshake: this.noiseHandshake.send() })
-      this.write(reply)
+    if (this._noiseHandshake.e === null) { // ephemeral not yet generated
+      this._noiseHandshake.initialise(Buffer.alloc(0))
+      this._noiseHandshake.recv(noiseHandshake)
+      this.write(c.encode(encodings.handshake, { noiseHandshake: this._noiseHandshake.send() }))
     } else {
-      this.noiseHandshake.recv(noiseHandshake)
-      this.encryptionCipher = new Cipher(this.noiseHandshake.rx)
-      this.decryptionCipher = new Cipher(this.noiseHandshake.tx)
+      this._noiseHandshake.recv(noiseHandshake)
+      this._encryptionCipher = new Cipher(this._noiseHandshake.rx)
+      this._decryptionCipher = new Cipher(this._noiseHandshake.tx)
     }
   }
 
   async _ondata (data) {
-    if (!this.noiseHandshake.complete) {
+    if (!this._noiseHandshake.complete) {
       this._handshake(data)
     } else {
-      // TODO change with callback
-      const decrypted = this.decryptionCipher.decrypt(data)
-      console.log('received', decrypted.toString())
+      const decrypted = this._decryptionCipher.decrypt(data)
+      this._onconnection(decrypted)
     }
   }
 }
