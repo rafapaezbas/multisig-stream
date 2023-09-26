@@ -55,7 +55,7 @@ class AuthenticatedSession {
 
   _handshake (data) {
     const { noiseHandshake } = c.decode(encodings.handshake, data)
-    if (this._noiseHandshake.e === null) { // ephemeral not yet generated
+    if (this._noiseHandshake.e === null) { // ephemeral key not yet generated
       this._noiseHandshake.initialise(Buffer.alloc(0))
       this._noiseHandshake.recv(noiseHandshake)
       this.write(c.encode(encodings.handshake, { noiseHandshake: this._noiseHandshake.send() }))
@@ -71,7 +71,12 @@ class AuthenticatedSession {
       this._handshake(data)
     } else {
       const decrypted = this._decryptionCipher.decrypt(data)
-      this._onconnection(decrypted)
+      const { id, payload } = c.decode(encodings.message, decrypted)
+      const reply = (response) => {
+        const message = c.encode(encodings.message, { id, payload: Buffer.from(response) })
+        this.write(message)
+      }
+      this._onconnection(payload, reply)
     }
   }
 }

@@ -81,7 +81,9 @@ test('encrypted client/server', async (t) => {
     messages++
   }
 
-  const server = new Server((data) => check(data))
+  const server = new Server((data, reply) => {
+    check(data)
+  })
   const client = new Client()
 
   server.listen(3333)
@@ -90,6 +92,28 @@ test('encrypted client/server', async (t) => {
   client.write(payloadA)
   client.write(payloadB)
   client.write(payloadC)
+
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  server.close()
+  client.close()
+})
+
+test('ack', async (t) => {
+  t.plan(1)
+
+  const payload = 'hello from client'
+
+  const server = new Server((request, reply) => {
+    reply(request) // echo
+  })
+  const client = new Client()
+
+  server.listen(3333)
+  await client.connect(3333)
+
+  client.write(payload, (response) => {
+    t.is(response.toString(), payload)
+  })
 
   await new Promise((resolve) => setTimeout(resolve, 500))
   server.close()
