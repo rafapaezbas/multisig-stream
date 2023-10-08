@@ -1,6 +1,8 @@
 const { tcpReceiveStream } = require('../lib/tcp-receive-stream.js')
 const { tcpSendStream } = require('../lib/tcp-send-stream.js')
 const test = require('brittle')
+const b4a = require('b4a')
+const sodium = require('sodium-universal')
 const { pipeline, Readable } = require('streamx')
 const Client = require('../client.js')
 const Server = require('../server.js')
@@ -10,7 +12,7 @@ test('messages format', async (t) => {
   const clientStream = tcpSendStream()
   t.plan(3)
 
-  const payload = Buffer.from('hello from receiver')
+  const payload = b4a.from('hello from receiver')
 
   const stream = pipeline(clientStream, serverStream)
 
@@ -27,7 +29,7 @@ test('splitted message', async (t) => {
   const serverStream = tcpReceiveStream()
   t.plan(3)
 
-  const payload = Buffer.from('hello again from receiver, message splited')
+  const payload = b4a.from('hello again from receiver, message splited')
   const msg = addHeader(payload)
   const msgA = msg.slice(0, Math.floor(msg.length / 2))
   const msgB = msg.slice(Math.floor(msg.length / 2), msg.length)
@@ -45,14 +47,14 @@ test('multi message', async (t) => {
   const serverStream = tcpReceiveStream()
   t.plan(6)
 
-  const payloadA = Buffer.from('this is payloadA')
-  const payloadB = Buffer.from('and this is payloadB')
+  const payloadA = b4a.from('this is payloadA')
+  const payloadB = b4a.from('and this is payloadB')
   const msgA = addHeader(payloadA)
   const msgB = addHeader(payloadB)
 
   let messages = 0
 
-  const stream = pipeline(Readable.from(Buffer.concat([msgA, msgB])), serverStream)
+  const stream = pipeline(Readable.from(b4a.concat([msgA, msgB])), serverStream)
 
   stream.on('data', rcv => {
     if (messages === 0) {
@@ -150,15 +152,62 @@ test('multi client', async (t) => {
   clientB.close()
 })
 
+test.solo('signed message', async (t) => {
+  t.plan(4)
+
+  const keyPairA = keyPair()
+  const keyPairB = keyPair()
+  const payload = 'hello from client'
+
+  const server = new Server((request, reply, socket) => {
+    reply(request) // echo
+  }, noob)
+  const client = new Client([keyPairA, keyPairB])
+
+  server.listen(3333)
+  await client.connect(3333)
+
+  client.write(payload, (response) => {
+    t.is(response.toString(), payload)
+  })
+
+  t.is(server._sessions[0]._remotePublicKeys.length, 2)
+  t.ok(keyPairA.publicKey.equals(server._sessions[0]._remotePublicKeys[0]))
+  t.ok(keyPairB.publicKey.equals(server._sessions[0]._remotePublicKeys[1]))
+
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  server.close()
+  client.close()
+})
+
+function keyPair (seed) {
+  const publicKey = b4a.allocUnsafe(sodium.crypto_sign_PUBLICKEYBYTES)
+  const secretKey = b4a.allocUnsafe(sodium.crypto_sign_SECRETKEYBYTES)
+
+  if (seed) sodium.crypto_sign_seed_keypair(publicKey, secretKey, seed)
+  else sodium.crypto_sign_keypair(publicKey, secretKey)
+
+  return {
+    publicKey,
+    secretKey
+  }
+}
+
 // Same as transform of tcp-client-stream
 
 function addHeader (data) {
-  const buffer = Buffer.from(data)
-  const length = Buffer.alloc(4) // UInt32 bytes
+  const buffer = b4a.from(data)
+  const length = b4a.alloc(4) // UInt32 bytes
   length.writeUInt32BE(buffer.length)
-  return Buffer.concat([length, buffer])
+  return b4a.concat([length, buffer])
 }
 
-function noob () {
+function noob (publicKeys) {
+  console.log('!', publicKeys)
   return true
+}
+
+function falsy (publicKeys) {
+  console.log('!', publicKeys)
+  return false
 }

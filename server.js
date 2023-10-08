@@ -6,6 +6,7 @@ const c = require('compact-encoding')
 const { pipeline } = require('streamx')
 const Noise = require('noise-handshake')
 const Cipher = require('noise-handshake/cipher')
+const b4a = require('b4a')
 
 module.exports = class Server {
   constructor (onconnection, checkPublicKeys) {
@@ -44,7 +45,7 @@ class AuthenticatedSession {
 
   write (msg) {
     if (this._encryptionCipher) {
-      this._sendStream.write(this._encryptionCipher.encrypt(Buffer.from(msg)))
+      this._sendStream.write(this._encryptionCipher.encrypt(b4a.from(msg)))
     } else {
       this._sendStream.write(msg)
     }
@@ -57,21 +58,21 @@ class AuthenticatedSession {
   _handshake (data) {
     const { noiseHandshake, publicKeys } = c.decode(encodings.handshake, data)
     if (this._noiseHandshake.e === null) { // ephemeral key not yet generated
-      this._noiseHandshake.initialise(Buffer.alloc(0))
+      this._noiseHandshake.initialise(b4a.alloc(0))
       this._noiseHandshake.recv(noiseHandshake)
       this.write(c.encode(encodings.handshake, { noiseHandshake: this._noiseHandshake.send() }))
     } else {
       this._noiseHandshake.recv(noiseHandshake)
       this._encryptionCipher = new Cipher(this._noiseHandshake.rx)
       this._decryptionCipher = new Cipher(this._noiseHandshake.tx)
-
-      if (!publicKeys || !this._checkPublicKeys(publicKeys)) {
-        const ack = c.encode(encodings.ack, { id: this._publicKeysAckId(), error: 1, payload: Buffer.from('Invalid public keys.') })
+      const remotePublicKeys = publicKeys === null ? null : publicKeys.map(e => this._decryptionCipher.decrypt(e))
+      if (this._checkPublicKeys(remotePublicKeys)) {
+        const ack = c.encode(encodings.ack, { id: this._publicKeysAckId(), payload: b4a.from('Accepted public keys.') })
         this.write(ack)
+        this._remotePublicKeys = remotePublicKeys
       } else {
-        const ack = c.encode(encodings.ack, { id: this._publicKeysAckId(), payload: Buffer.from('Accepted public keys.') })
+        const ack = c.encode(encodings.ack, { id: this._publicKeysAckId(), error: 1, payload: b4a.from('Invalid public keys.') })
         this.write(ack)
-        // TODO add public keys
       }
     }
   }
@@ -83,7 +84,7 @@ class AuthenticatedSession {
       const decrypted = this._decryptionCipher.decrypt(data)
       const { id, payload } = c.decode(encodings.message, decrypted)
       const reply = (response) => {
-        const message = c.encode(encodings.ack, { id, payload: Buffer.from(response) })
+        const message = c.encode(encodings.ack, { id, payload: b4a.from(response) })
         this.write(message)
       }
       this._onconnection(payload, reply, this._socket)
@@ -91,6 +92,6 @@ class AuthenticatedSession {
   }
 
   _publicKeysAckId () {
-    return Buffer.alloc(32)
+    return b4a.alloc(32)
   }
 }

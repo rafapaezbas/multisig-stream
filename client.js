@@ -6,7 +6,8 @@ const c = require('compact-encoding')
 const { pipeline } = require('streamx')
 const Noise = require('noise-handshake')
 const Cipher = require('noise-handshake/cipher')
-const { randombytes_buf } = require('sodium-universal')
+const sodium = require('sodium-universal')
+const b4a = require('b4a')
 
 module.exports = class Client {
   constructor (publicKeys, opts = {}) {
@@ -14,7 +15,8 @@ module.exports = class Client {
     this._sendStream = tcpSendStream()
     this._noiseHandshake = new Noise('XX', true, null)
     this._encryptionCipher = null
-    this._handshakeReady = null
+    this._handshakeFinished = false // needs this flag for encryption only after handshake (except publicKeys in handshake)
+    this._handshakeReady = null // this is the resolve callback
     this._publicKeys = publicKeys || []
     this._acks = new Map()
   }
@@ -37,19 +39,20 @@ module.exports = class Client {
   }
 
   write (payload, callback) {
-    if (this._encryptionCipher) {
+    if (this._encryptionCipher && this._handshakeFinished) {
       const id = this._randomId()
       const signatures = [] // TODO add signature
-      const message = c.encode(encodings.message, { id, payload: Buffer.from(payload), signatures })
+      const message = c.encode(encodings.message, { id, payload: b4a.from(payload), signatures })
       this._acks.set(id.readUInt32BE(), callback)
       this._sendStream.write(this._encryptionCipher.encrypt(message))
     } else {
       this._sendStream.write(payload)
+      if (callback) this._acks.set(0, callback) // 0 is the id for handshake messages
     }
   }
 
   _handshake () {
-    this._noiseHandshake.initialise(Buffer.alloc(0))
+    this._noiseHandshake.initialise(b4a.alloc(0))
     const noiseHandshake = this._noiseHandshake.send()
     const data = c.encode(encodings.handshake, { noiseHandshake })
     this.write(data)
@@ -57,12 +60,17 @@ module.exports = class Client {
 
   async _ondata (data) {
     if (!this._noiseHandshake.complete) {
+      // This receives noiseHandshake reply
+      // initialises encrypt/decrypt ciphers
+      // sends initiator reply (see https://github.com/holepunchto/noise-handshake/blob/main/test/handshake.js#L46-L49)
+      // + encrypted public keys request
       const { noiseHandshake } = c.decode(encodings.handshake, data)
       this._noiseHandshake.recv(noiseHandshake)
-      this.write(c.encode(encodings.handshake, { noiseHandshake: this._noiseHandshake.send(), publicKeys: this._publicKeys }))
+      const noiseHandshakeSend = this._noiseHandshake.send()
       this._encryptionCipher = new Cipher(this._noiseHandshake.rx)
       this._decryptionCipher = new Cipher(this._noiseHandshake.tx)
-      this._handshakeReady() // resolves connect promise
+      const handshake = { noiseHandshake: noiseHandshakeSend, publicKeys: this._encryptedPublicKeys() }
+      this.write(c.encode(encodings.handshake, handshake), this._handlePublicKeysResponse.bind(this))
     } else {
       const decryptedData = this._decryptionCipher.decrypt(data)
       const { id, error, payload } = c.decode(encodings.ack, decryptedData)
@@ -75,14 +83,23 @@ module.exports = class Client {
     }
   }
 
+  _handlePublicKeysResponse (response) {
+    this._handshakeFinished = true
+    this._handshakeReady()
+  }
+
   _handleError (error, id, payload) {
     // TODO add hook?
     console.log(`Received error code: ${error}. ${payload}`)
   }
 
   _randomId () {
-    const id = Buffer.allocUnsafe(32)
-    randombytes_buf(id)
+    const id = b4a.allocUnsafe(32)
+    sodium.randombytes_buf(id)
     return id
+  }
+
+  _encryptedPublicKeys () {
+    return this._publicKeys.map(e => this._encryptionCipher.encrypt(e.publicKey))
   }
 }
