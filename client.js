@@ -9,12 +9,13 @@ const Cipher = require('noise-handshake/cipher')
 const { randombytes_buf } = require('sodium-universal')
 
 module.exports = class Client {
-  constructor (opts = {}) {
+  constructor (publicKeys, opts = {}) {
     this._netClient = new net.Socket()
     this._sendStream = tcpSendStream()
     this._noiseHandshake = new Noise('XX', true, null)
     this._encryptionCipher = null
     this._handshakeReady = null
+    this._publicKeys = publicKeys || []
     this._acks = new Map()
   }
 
@@ -35,11 +36,12 @@ module.exports = class Client {
     return this._netClient.end()
   }
 
-  write (payload, cb) {
+  write (payload, callback) {
     if (this._encryptionCipher) {
       const id = this._randomId()
-      const message = c.encode(encodings.message, { id, payload: Buffer.from(payload) })
-      this._acks.set(id.readUInt32BE(), cb)
+      const signatures = [] // TODO add signature
+      const message = c.encode(encodings.message, { id, payload: Buffer.from(payload), signatures })
+      this._acks.set(id.readUInt32BE(), callback)
       this._sendStream.write(this._encryptionCipher.encrypt(message))
     } else {
       this._sendStream.write(payload)
@@ -57,16 +59,25 @@ module.exports = class Client {
     if (!this._noiseHandshake.complete) {
       const { noiseHandshake } = c.decode(encodings.handshake, data)
       this._noiseHandshake.recv(noiseHandshake)
-      this.write(c.encode(encodings.handshake, { noiseHandshake: this._noiseHandshake.send() }))
+      this.write(c.encode(encodings.handshake, { noiseHandshake: this._noiseHandshake.send(), publicKeys: this._publicKeys }))
       this._encryptionCipher = new Cipher(this._noiseHandshake.rx)
       this._decryptionCipher = new Cipher(this._noiseHandshake.tx)
       this._handshakeReady() // resolves connect promise
     } else {
       const decryptedData = this._decryptionCipher.decrypt(data)
-      const { id, payload } = c.decode(encodings.message, decryptedData)
-      const callback = this._acks.get(id.readUInt32BE())
-      if (callback) await callback(payload)
+      const { id, error, payload } = c.decode(encodings.ack, decryptedData)
+      if (error) {
+        this._handleError(error, id, payload)
+      } else {
+        const callback = this._acks.get(id.readUInt32BE())
+        if (callback) await callback(payload)
+      }
     }
+  }
+
+  _handleError (error, id, payload) {
+    // TODO add hook?
+    console.log(`Received error code: ${error}. ${payload}`)
   }
 
   _randomId () {

@@ -83,7 +83,7 @@ test('encrypted client/server', async (t) => {
 
   const server = new Server((data, reply) => {
     check(data)
-  })
+  }, noob)
   const client = new Client()
 
   server.listen(3333)
@@ -103,9 +103,9 @@ test('ack', async (t) => {
 
   const payload = 'hello from client'
 
-  const server = new Server((request, reply) => {
+  const server = new Server((request, reply, socket) => {
     reply(request) // echo
-  })
+  }, noob)
   const client = new Client()
 
   server.listen(3333)
@@ -133,7 +133,7 @@ test('multi client', async (t) => {
     messages++
   }
 
-  const server = new Server((data) => check(data))
+  const server = new Server((data) => check(data), noob)
   const clientA = new Client()
   const clientB = new Client()
 
@@ -157,4 +157,8 @@ function addHeader (data) {
   const length = Buffer.alloc(4) // UInt32 bytes
   length.writeUInt32BE(buffer.length)
   return Buffer.concat([length, buffer])
+}
+
+function noob () {
+  return true
 }
