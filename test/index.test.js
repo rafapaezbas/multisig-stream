@@ -4,8 +4,7 @@ const test = require('brittle')
 const b4a = require('b4a')
 const sodium = require('sodium-universal')
 const { pipeline, Readable } = require('streamx')
-const Client = require('../client.js')
-const Server = require('../server.js')
+const { Client, Server } = require('../index.js')
 
 test('messages format', async (t) => {
   const serverStream = tcpReceiveStream()
