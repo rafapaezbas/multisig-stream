@@ -1,4 +1,5 @@
 const net = require('net')
+const sodium = require('sodium-universal')
 const { tcpReceiveStream } = require('./lib/tcp-receive-stream.js')
 const { tcpSendStream } = require('./lib/tcp-send-stream.js')
 const encodings = require('./lib/encodings')
@@ -82,16 +83,26 @@ class AuthenticatedSession {
       this._handshake(data)
     } else {
       const decrypted = this._decryptionCipher.decrypt(data)
-      const { id, payload } = c.decode(encodings.message, decrypted)
-      const reply = (response) => {
-        const message = c.encode(encodings.ack, { id, payload: b4a.from(response) })
-        this.write(message)
+      const { id, payload, signatures } = c.decode(encodings.message, decrypted)
+      const verifications = signatures.map((e, i) => this._verify(payload, e, this._remotePublicKeys[i]))
+
+      if (verifications.length < this._remotePublicKeys.length || verifications.find(e => !e)) {
+        // TODO implement failed varification response
+      } else {
+        const reply = (response) => {
+          const message = c.encode(encodings.ack, { id, payload: b4a.from(response) })
+          this.write(message)
+        }
+        this._onconnection(payload, reply, this._socket)
       }
-      this._onconnection(payload, reply, this._socket)
     }
   }
 
   _publicKeysAckId () {
     return b4a.alloc(32)
+  }
+
+  _verify (message, signature, publicKey) {
+    return sodium.crypto_sign_verify_detached(signature, message, publicKey)
   }
 }

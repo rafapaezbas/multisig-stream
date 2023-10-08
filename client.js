@@ -22,7 +22,7 @@ module.exports = class Client {
   }
 
   connect (port, address = '127.0.0.1') {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       this._netClient.connect(port, address, () => {
         this._receiveStream = pipeline(this._netClient, tcpReceiveStream())
         this._sendStream.on('data', (data) => this._netClient.write(data)) // pipeline does not work with socket for some reason
@@ -30,6 +30,7 @@ module.exports = class Client {
         this._netClient.on('end', () => this.close())
         this._handshake()
         this._handshakeReady = resolve
+        this._handshakeFailed = reject
       })
     })
   }
@@ -38,10 +39,9 @@ module.exports = class Client {
     return this._netClient.end()
   }
 
-  write (payload, callback) {
+  write (payload, signatures, callback) {
     if (this._encryptionCipher && this._handshakeFinished) {
       const id = this._randomId()
-      const signatures = [] // TODO add signature
       const message = c.encode(encodings.message, { id, payload: b4a.from(payload), signatures })
       this._acks.set(id.readUInt32BE(), callback)
       this._sendStream.write(this._encryptionCipher.encrypt(message))
@@ -60,17 +60,18 @@ module.exports = class Client {
 
   async _ondata (data) {
     if (!this._noiseHandshake.complete) {
-      // This receives noiseHandshake reply
-      // initialises encrypt/decrypt ciphers
-      // sends initiator reply (see https://github.com/holepunchto/noise-handshake/blob/main/test/handshake.js#L46-L49)
-      // + encrypted public keys request
+      /*
+        This receives noiseHandshake reply, initialises encrypt/decrypt ciphers,
+        sends initiator reply (see https://github.com/holepunchto/noise-handshake/blob/main/test/handshake.js#L46-L49)
+        and sends encrypted public keys request
+      */
       const { noiseHandshake } = c.decode(encodings.handshake, data)
       this._noiseHandshake.recv(noiseHandshake)
       const noiseHandshakeSend = this._noiseHandshake.send()
       this._encryptionCipher = new Cipher(this._noiseHandshake.rx)
       this._decryptionCipher = new Cipher(this._noiseHandshake.tx)
       const handshake = { noiseHandshake: noiseHandshakeSend, publicKeys: this._encryptedPublicKeys() }
-      this.write(c.encode(encodings.handshake, handshake), this._handlePublicKeysResponse.bind(this))
+      this.write(c.encode(encodings.handshake, handshake), null, this._handlePublicKeysResponse.bind(this))
     } else {
       const decryptedData = this._decryptionCipher.decrypt(data)
       const { id, error, payload } = c.decode(encodings.ack, decryptedData)
@@ -89,8 +90,10 @@ module.exports = class Client {
   }
 
   _handleError (error, id, payload) {
+    if (id.equals(b4a.alloc(32))) {
+      this._handshakeFailed(new Error('Invalid public keys.'))
+    }
     // TODO add hook?
-    console.log(`Received error code: ${error}. ${payload}`)
   }
 
   _randomId () {

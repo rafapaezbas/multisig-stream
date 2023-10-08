@@ -91,9 +91,9 @@ test('encrypted client/server', async (t) => {
   server.listen(3333)
   await client.connect(3333)
 
-  client.write(payloadA)
-  client.write(payloadB)
-  client.write(payloadC)
+  client.write(payloadA, [])
+  client.write(payloadB, [])
+  client.write(payloadC, [])
 
   await new Promise((resolve) => setTimeout(resolve, 500))
   server.close()
@@ -113,7 +113,7 @@ test('ack', async (t) => {
   server.listen(3333)
   await client.connect(3333)
 
-  client.write(payload, (response) => {
+  client.write(payload, [], (response) => {
     t.is(response.toString(), payload)
   })
 
@@ -143,8 +143,8 @@ test('multi client', async (t) => {
   await clientA.connect(3333)
   await clientB.connect(3333)
 
-  clientA.write(payloadA)
-  clientB.write(payloadB)
+  clientA.write(payloadA, [])
+  clientB.write(payloadB, [])
 
   await new Promise((resolve) => setTimeout(resolve, 500))
   server.close()
@@ -152,22 +152,32 @@ test('multi client', async (t) => {
   clientB.close()
 })
 
-test.solo('signed message', async (t) => {
+test('signed message', async (t) => {
   t.plan(4)
 
   const keyPairA = keyPair()
   const keyPairB = keyPair()
   const payload = 'hello from client'
 
-  const server = new Server((request, reply, socket) => {
-    reply(request) // echo
-  }, noob)
+  const checkKeyPairs = (publicKeys) => {
+    return publicKeys[0].equals(keyPairA.publicKey) && publicKeys[1].equals(keyPairB.publicKey)
+  }
+
+  const echo = (request, reply, socket) => {
+    reply(request)
+  }
+
+  const server = new Server(echo, checkKeyPairs)
   const client = new Client([keyPairA, keyPairB])
 
   server.listen(3333)
   await client.connect(3333)
 
-  client.write(payload, (response) => {
+  const signatures = []
+  signatures.push(sign(Buffer.from(payload), keyPairA.secretKey))
+  signatures.push(sign(Buffer.from(payload), keyPairB.secretKey))
+
+  client.write(payload, signatures, (response) => {
     t.is(response.toString(), payload)
   })
 
@@ -203,11 +213,11 @@ function addHeader (data) {
 }
 
 function noob (publicKeys) {
-  console.log('!', publicKeys)
   return true
 }
 
-function falsy (publicKeys) {
-  console.log('!', publicKeys)
-  return false
+function sign (message, secretKey) {
+  const signature = b4a.allocUnsafe(sodium.crypto_sign_BYTES)
+  sodium.crypto_sign_detached(signature, message, secretKey)
+  return signature
 }
