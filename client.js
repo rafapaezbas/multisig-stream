@@ -58,20 +58,25 @@ module.exports = class Client {
     this.write(data)
   }
 
+  /*
+    This receives noiseHandshake reply, initialises encrypt/decrypt ciphers,
+    sends initiator reply (see https://github.com/holepunchto/noise-handshake/blob/main/test/handshake.js#L46-L49)
+    and sends encrypted public keys request
+  */
+
+  _endHandshake (data) {
+    const { noiseHandshake } = c.decode(encodings.handshake, data)
+    this._noiseHandshake.recv(noiseHandshake)
+    const noiseHandshakeSend = this._noiseHandshake.send()
+    this._encryptionCipher = new Cipher(this._noiseHandshake.rx)
+    this._decryptionCipher = new Cipher(this._noiseHandshake.tx)
+    const handshake = { noiseHandshake: noiseHandshakeSend, publicKeys: this._encryptedPublicKeys() }
+    this.write(c.encode(encodings.handshake, handshake), null, this._handlePublicKeysResponse.bind(this))
+  }
+
   async _ondata (data) {
     if (!this._noiseHandshake.complete) {
-      /*
-        This receives noiseHandshake reply, initialises encrypt/decrypt ciphers,
-        sends initiator reply (see https://github.com/holepunchto/noise-handshake/blob/main/test/handshake.js#L46-L49)
-        and sends encrypted public keys request
-      */
-      const { noiseHandshake } = c.decode(encodings.handshake, data)
-      this._noiseHandshake.recv(noiseHandshake)
-      const noiseHandshakeSend = this._noiseHandshake.send()
-      this._encryptionCipher = new Cipher(this._noiseHandshake.rx)
-      this._decryptionCipher = new Cipher(this._noiseHandshake.tx)
-      const handshake = { noiseHandshake: noiseHandshakeSend, publicKeys: this._encryptedPublicKeys() }
-      this.write(c.encode(encodings.handshake, handshake), null, this._handlePublicKeysResponse.bind(this))
+      this._endHandshake(data)
     } else {
       const decryptedData = this._decryptionCipher.decrypt(data)
       const { id, error, payload } = c.decode(encodings.ack, decryptedData)
