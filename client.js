@@ -28,7 +28,7 @@ module.exports = class Client {
         this._sendStream.on('data', (data) => this._netClient.write(data)) // pipeline does not work with socket for some reason
         this._receiveStream.on('data', (data) => this._ondata(data))
         this._netClient.on('end', () => this.close())
-        this._handshake()
+        this._startHandshake()
         this._handshakeReady = resolve
         this._handshakeFailed = reject
       })
@@ -51,7 +51,7 @@ module.exports = class Client {
     }
   }
 
-  _handshake () {
+  _startHandshake () {
     this._noiseHandshake.initialise(b4a.alloc(0))
     const noiseHandshake = this._noiseHandshake.send()
     const data = c.encode(encodings.handshake, { noiseHandshake })

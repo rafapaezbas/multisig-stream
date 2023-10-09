@@ -57,24 +57,33 @@ class AuthenticatedSession {
   }
 
   _handshake (data) {
-    const { noiseHandshake, publicKeys } = c.decode(encodings.handshake, data)
     if (this._noiseHandshake.e === null) { // ephemeral key not yet generated
-      this._noiseHandshake.initialise(b4a.alloc(0))
-      this._noiseHandshake.recv(noiseHandshake)
-      this.write(c.encode(encodings.handshake, { noiseHandshake: this._noiseHandshake.send() }))
+      this._startHandshake(data)
     } else {
-      this._noiseHandshake.recv(noiseHandshake)
-      this._encryptionCipher = new Cipher(this._noiseHandshake.rx)
-      this._decryptionCipher = new Cipher(this._noiseHandshake.tx)
-      const remotePublicKeys = publicKeys === null ? null : publicKeys.map(e => this._decryptionCipher.decrypt(e))
-      if (this._checkPublicKeys(remotePublicKeys)) {
-        const ack = c.encode(encodings.ack, { id: this._publicKeysAckId(), payload: b4a.from('Accepted public keys.') })
-        this.write(ack)
-        this._remotePublicKeys = remotePublicKeys
-      } else {
-        const ack = c.encode(encodings.ack, { id: this._publicKeysAckId(), error: 1, payload: b4a.from('Invalid public keys.') })
-        this.write(ack)
-      }
+      this._endHandshake(data)
+    }
+  }
+
+  _startHandshake (data) {
+    const { noiseHandshake } = c.decode(encodings.handshake, data)
+    this._noiseHandshake.initialise(b4a.alloc(0))
+    this._noiseHandshake.recv(noiseHandshake)
+    this.write(c.encode(encodings.handshake, { noiseHandshake: this._noiseHandshake.send() }))
+  }
+
+  _endHandshake (data) {
+    const { noiseHandshake, publicKeys } = c.decode(encodings.handshake, data)
+    this._noiseHandshake.recv(noiseHandshake)
+    this._encryptionCipher = new Cipher(this._noiseHandshake.rx)
+    this._decryptionCipher = new Cipher(this._noiseHandshake.tx)
+    const remotePublicKeys = publicKeys === null ? null : publicKeys.map(e => this._decryptionCipher.decrypt(e))
+    if (this._checkPublicKeys(remotePublicKeys)) {
+      const ack = c.encode(encodings.ack, { id: this._publicKeysAckId(), payload: b4a.from('Accepted public keys.') })
+      this.write(ack)
+      this._remotePublicKeys = remotePublicKeys
+    } else {
+      const ack = c.encode(encodings.ack, { id: this._publicKeysAckId(), error: 1, payload: b4a.from('Invalid public keys.') })
+      this.write(ack)
     }
   }
 
@@ -84,18 +93,21 @@ class AuthenticatedSession {
     } else {
       const decrypted = this._decryptionCipher.decrypt(data)
       const { id, payload, signatures } = c.decode(encodings.message, decrypted)
-      const verifications = signatures.map((e, i) => this._verify(payload, e, this._remotePublicKeys[i]))
-
-      if (verifications.length < this._remotePublicKeys.length || verifications.find(e => !e)) {
-        // TODO implement failed varification response
-      } else {
+      if (this._verifySignatures(signatures, payload)) {
         const reply = (response) => {
           const message = c.encode(encodings.ack, { id, payload: b4a.from(response) })
           this.write(message)
         }
         this._onconnection(payload, reply, this._socket)
+      } else {
+        // TODO implement failed varification response
       }
     }
+  }
+
+  _verifySignatures (signatures, payload) {
+    const verifications = signatures.map((e, i) => this._verify(payload, e, this._remotePublicKeys[i]))
+    return verifications.length >= this._remotePublicKeys.length && verifications.find(e => !e) === undefined
   }
 
   _publicKeysAckId () {
